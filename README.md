@@ -2,7 +2,7 @@
 
 ## Simulator
 
-📖 **[Complete Usage Guide & Examples →](USAGE.md)**
+📖 **[Complete Usage Guide & Examples →](Simulator_USAGE.md)**
 
 ### Quick Start
 
