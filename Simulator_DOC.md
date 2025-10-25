@@ -104,7 +104,7 @@ Gurobi version: (11, 0, 0)
 ### 1. Basic FBA Analysis
 
 ```python
-from simulator_improved import Simulator
+from simulator import Simulator
 
 # Initialize simulator
 sim = Simulator()
@@ -123,7 +123,7 @@ if status == 2:  # Optimal solution found
 ### 2. Using COBRApy Test Models
 
 ```python
-from simulator_improved import Simulator
+from simulator import Simulator
 from cobra.test import create_test_model
 
 # Load E. coli core model
@@ -149,7 +149,7 @@ if status == 2:
 ### 4. Gene Knockout Simulation with MOMA
 
 ```python
-from simulator_improved import Simulator
+from simulator import Simulator
 from cobra.test import create_test_model
 
 # Load model and get wild-type flux distribution
@@ -308,7 +308,7 @@ for reaction, diff in top_changed:
 ### Loading Models from Different Sources
 
 ```python
-from simulator_improved import Simulator
+from simulator import Simulator
 import cobra
 
 # From SBML file
