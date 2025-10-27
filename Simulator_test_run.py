@@ -1,8 +1,11 @@
 from Simulator import Simulator
+from cobra.io import load_model
+
+model = load_model("textbook")
 
 # 모델 로드
 sim = Simulator()
-sim.read_model('ecoli_core.xml')
+sim.load_cobra_model(model)
 
 # 1. FBA 실행
 status, obj_val, flux_dist = sim.run_FBA()
