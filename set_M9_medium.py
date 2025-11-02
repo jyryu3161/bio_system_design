@@ -1,7 +1,9 @@
 import cobra
 
 # --- 1. 모델 불러오기 ---
-model = cobra.io.read_sbml_model("new_model.xml")
+model = cobra.io.read_sbml_model("model.xml")
+growth_rxn = model.reactions.get_by_id("Growth")
+model.objective = growth_rxn
 
 # --- 2. 기본 M9 배지 구성 ---
 # M9 minimal medium 구성 성분 (E. coli 기준)
