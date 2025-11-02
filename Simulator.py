@@ -1,5 +1,5 @@
 import cobra.io as io
-from gurobipy import *
+from optlang import Model, Variable, Constraint, Objective
 
 
 class Simulator(object):
@@ -75,83 +75,106 @@ class Simulator(object):
                 if upper_boundary_constraints[key] == float("inf"):
                     upper_boundary_constraints[key] = 1000.0
 
-        # Prepare Gurobi data structures
-        pairs, coffvalue = multidict(Smatrix)
-        pairs = tuplelist(pairs)
-
-        # Create Gurobi model
-        m = Model('MOMA')
-        m.setParam('OutputFlag', 0)
-        m.reset()
+        # Create optlang model
+        m = Model(name='MOMA')
 
         # Create variables
         v = {}  # Flux variables
         fplus = {}  # Positive deviation from wild-type
         fminus = {}  # Negative deviation from wild-type
 
+        variables_to_add = []
+
         for each_reaction in model_reactions:
             # Set flux bounds based on constraints or model defaults
             if each_reaction in flux_constraints:
-                v[each_reaction] = m.addVar(lb=flux_constraints[each_reaction][0],
-                                            ub=flux_constraints[each_reaction][1], 
-                                            name=each_reaction)
+                v[each_reaction] = Variable(
+                    each_reaction,
+                    lb=flux_constraints[each_reaction][0],
+                    ub=flux_constraints[each_reaction][1]
+                )
             else:
-                v[each_reaction] = m.addVar(lb=lower_boundary_constraints[each_reaction],
-                                            ub=upper_boundary_constraints[each_reaction],
-                                            name=each_reaction)
+                v[each_reaction] = Variable(
+                    each_reaction,
+                    lb=lower_boundary_constraints[each_reaction],
+                    ub=upper_boundary_constraints[each_reaction]
+                )
             # Deviation variables (non-negative)
-            fplus[each_reaction] = m.addVar(lb=0.0, ub=1000.0, name=f"fplus_{each_reaction}")
-            fminus[each_reaction] = m.addVar(lb=0.0, ub=1000.0, name=f"fminus_{each_reaction}")
+            fplus[each_reaction] = Variable(f"fplus_{each_reaction}", lb=0.0, ub=1000.0)
+            fminus[each_reaction] = Variable(f"fminus_{each_reaction}", lb=0.0, ub=1000.0)
 
-        m.update()
+            variables_to_add.extend([v[each_reaction], fplus[each_reaction], fminus[each_reaction]])
+
+        m.add(variables_to_add)
 
         # Add constraints relating flux to deviations
+        constraints = []
+
         for each_reaction in model_reactions:
             # v = fplus - fminus (flux decomposition)
-            m.addConstr(v[each_reaction] == (fplus[each_reaction] - fminus[each_reaction]),
-                       name=f"flux_decomp_{each_reaction}")
-            
+            constraints.append(Constraint(
+                v[each_reaction] - fplus[each_reaction] + fminus[each_reaction],
+                lb=0, ub=0,
+                name=f"flux_decomp_{each_reaction}"
+            ))
+
             # fplus >= v - wild_flux (captures positive deviation)
             if each_reaction in wild_flux:
-                m.addConstr(fplus[each_reaction] >= v[each_reaction] - wild_flux[each_reaction],
-                           name=f"fplus_lb_{each_reaction}")
+                constraints.append(Constraint(
+                    fplus[each_reaction] - v[each_reaction] + wild_flux[each_reaction],
+                    lb=0,
+                    name=f"fplus_lb_{each_reaction}"
+                ))
                 # fminus >= wild_flux - v (captures negative deviation)
-                m.addConstr(fminus[each_reaction] >= wild_flux[each_reaction] - v[each_reaction],
-                           name=f"fminus_lb_{each_reaction}")
+                constraints.append(Constraint(
+                    fminus[each_reaction] + v[each_reaction] - wild_flux[each_reaction],
+                    lb=0,
+                    name=f"fminus_lb_{each_reaction}"
+                ))
 
-        m.update()
+        m.add(constraints)
 
         # Add steady-state mass balance constraints (Sv = 0)
-        for each_metabolite in model_metabolites:
-            if len(pairs.select(each_metabolite, '*')) == 0:
-                continue
-            m.addConstr(quicksum(
-                v[reaction] * coffvalue[metabolite, reaction] 
-                for metabolite, reaction in pairs.select(each_metabolite, '*')) == 0,
-                name=f"mass_balance_{each_metabolite}")
+        mass_balance_constraints = []
 
-        m.update()
+        for each_metabolite in model_metabolites:
+            # Find all reactions involving this metabolite
+            metabolite_reactions = [(met, rxn) for (met, rxn) in Smatrix.keys() if met == each_metabolite]
+
+            if len(metabolite_reactions) == 0:
+                continue
+
+            # Create mass balance expression: sum(S_ij * v_j) = 0
+            expr = sum(v[reaction] * Smatrix[metabolite, reaction]
+                      for metabolite, reaction in metabolite_reactions)
+
+            mass_balance_constraints.append(Constraint(
+                expr, lb=0, ub=0,
+                name=f"mass_balance_{each_metabolite}"
+            ))
+
+        m.add(mass_balance_constraints)
 
         # Set objective: minimize sum of absolute deviations
         # This approximates Euclidean distance minimization
         target_reactions = wild_flux.keys()
-        m.setObjective(quicksum(
-            (fplus[each_reaction] + fminus[each_reaction]) 
-            for each_reaction in target_reactions), GRB.MINIMIZE)
+        objective_expr = sum((fplus[each_reaction] + fminus[each_reaction])
+                            for each_reaction in target_reactions)
+        m.objective = Objective(objective_expr, direction='min')
 
         # Solve the optimization problem
         m.optimize()
 
         # Extract results if optimization was successful
-        if m.status == 2:  # GRB.OPTIMAL
+        if m.status == 'optimal':
             flux_distribution = {}
             for reaction in model_reactions:
-                flux_distribution[reaction] = float(v[reaction].x)
+                flux_distribution[reaction] = float(v[reaction].primal)
                 # Round near-zero values to exactly zero
-                if abs(float(v[reaction].x)) <= 1e-6:
+                if abs(float(v[reaction].primal)) <= 1e-6:
                     flux_distribution[reaction] = 0.0
 
-            return m.status, m.ObjVal, flux_distribution
+            return m.status, m.objective.value, flux_distribution
         else:
             return m.status, False, False
 
@@ -208,45 +231,57 @@ class Simulator(object):
                 if upper_boundary_constraints[key] == float("inf"):
                     upper_boundary_constraints[key] = 1000.0
 
-        # Prepare Gurobi data structures
-        pairs, coffvalue = multidict(Smatrix)
-        pairs = tuplelist(pairs)
-
-        # Create Gurobi model
-        m = Model('ROOM')
-        m.setParam('OutputFlag', 0)
-        m.reset()
+        # Create optlang model
+        m = Model(name='ROOM')
 
         # Create variables
         v = {}  # Flux variables
         y = {}  # Binary variables: 1 if reaction flux significantly changed, 0 otherwise
 
+        variables_to_add = []
+
         for each_reaction in model_reactions:
             # Set flux bounds based on constraints or model defaults
             if each_reaction in flux_constraints:
-                v[each_reaction] = m.addVar(lb=flux_constraints[each_reaction][0],
-                                            ub=flux_constraints[each_reaction][1], 
-                                            name=each_reaction)
+                v[each_reaction] = Variable(
+                    each_reaction,
+                    lb=flux_constraints[each_reaction][0],
+                    ub=flux_constraints[each_reaction][1]
+                )
             else:
-                v[each_reaction] = m.addVar(lb=lower_boundary_constraints[each_reaction],
-                                            ub=upper_boundary_constraints[each_reaction],
-                                            name=each_reaction)
-            
-            # Binary indicator variable for significant flux change
-            y[each_reaction] = m.addVar(vtype=GRB.BINARY, name=f"y_{each_reaction}")
+                v[each_reaction] = Variable(
+                    each_reaction,
+                    lb=lower_boundary_constraints[each_reaction],
+                    ub=upper_boundary_constraints[each_reaction]
+                )
 
-        m.update()
+            # Binary indicator variable for significant flux change
+            y[each_reaction] = Variable(f"y_{each_reaction}", type='binary')
+
+            variables_to_add.extend([v[each_reaction], y[each_reaction]])
+
+        m.add(variables_to_add)
 
         # Add steady-state mass balance constraints (Sv = 0)
-        for each_metabolite in model_metabolites:
-            if len(pairs.select(each_metabolite, '*')) == 0:
-                continue
-            m.addConstr(quicksum(
-                v[reaction] * coffvalue[metabolite, reaction] 
-                for metabolite, reaction in pairs.select(each_metabolite, '*')) == 0,
-                name=f"mass_balance_{each_metabolite}")
+        mass_balance_constraints = []
 
-        m.update()
+        for each_metabolite in model_metabolites:
+            # Find all reactions involving this metabolite
+            metabolite_reactions = [(met, rxn) for (met, rxn) in Smatrix.keys() if met == each_metabolite]
+
+            if len(metabolite_reactions) == 0:
+                continue
+
+            # Create mass balance expression: sum(S_ij * v_j) = 0
+            expr = sum(v[reaction] * Smatrix[metabolite, reaction]
+                      for metabolite, reaction in metabolite_reactions)
+
+            mass_balance_constraints.append(Constraint(
+                expr, lb=0, ub=0,
+                name=f"mass_balance_{each_metabolite}"
+            ))
+
+        m.add(mass_balance_constraints)
 
         # Add ROOM-specific constraints
         # For each reaction with reference flux, constrain deviation based on binary variable
@@ -285,32 +320,36 @@ class Simulator(object):
             # v <= w_upper + M_upper * y
             # When y=0: v <= w_upper (enforces upper bound of allowable range)
             # When y=1: v <= w_upper + M_upper (effectively no constraint)
-            m.addConstr(v[each_reaction] <= w_upper + M_upper * y[each_reaction],
-                       name=f"room_upper_{each_reaction}")
-            
+            m.add(Constraint(
+                v[each_reaction] - M_upper * y[each_reaction],
+                ub=w_upper,
+                name=f"room_upper_{each_reaction}"
+            ))
+
             # v >= w_lower - M_lower * y
             # When y=0: v >= w_lower (enforces lower bound of allowable range)
             # When y=1: v >= w_lower - M_lower (effectively no constraint)
-            m.addConstr(v[each_reaction] >= w_lower - M_lower * y[each_reaction],
-                       name=f"room_lower_{each_reaction}")
-
-        m.update()
+            m.add(Constraint(
+                v[each_reaction] + M_lower * y[each_reaction],
+                lb=w_lower,
+                name=f"room_lower_{each_reaction}"
+            ))
 
         # Set objective: minimize number of significantly changed reactions
-        m.setObjective(quicksum(y[each_reaction] for each_reaction in wild_flux.keys()), 
-                      GRB.MINIMIZE)
+        objective_expr = sum(y[each_reaction] for each_reaction in wild_flux.keys())
+        m.objective = Objective(objective_expr, direction='min')
 
         # Solve the optimization problem
         m.optimize()
 
         # Extract results if optimization was successful
-        if m.status == 2:  # GRB.OPTIMAL
-            objective_value = m.ObjVal  # Number of changed reactions
+        if m.status == 'optimal':
+            objective_value = m.objective.value  # Number of changed reactions
             flux_distribution = {}
             for reaction in model_reactions:
-                flux_distribution[reaction] = float(v[reaction].x)
+                flux_distribution[reaction] = float(v[reaction].primal)
                 # Round near-zero values to exactly zero
-                if abs(float(v[reaction].x)) <= 1e-6:
+                if abs(float(v[reaction].primal)) <= 1e-6:
                     flux_distribution[reaction] = 0.0
 
             return m.status, objective_value, flux_distribution
@@ -376,89 +415,102 @@ class Simulator(object):
                 if upper_boundary_constraints[key] == float("inf"):
                     upper_boundary_constraints[key] = 1000.0
 
-        # Prepare Gurobi data structures
-        pairs, coffvalue = multidict(Smatrix)
-        pairs = tuplelist(pairs)
-
-        # Create Gurobi model
-        m = Model('FBA')
-        m.setParam('OutputFlag', 0)
-        m.reset()
+        # Create optlang model
+        m = Model(name='FBA')
 
         # Create variables
         v = {}  # Flux variables
         fplus = {}  # Positive flux (for pFBA)
         fminus = {}  # Negative flux (for pFBA)
 
-        m.update()
+        variables_to_add = []
 
         for each_reaction in model_reactions:
             # Set flux bounds based on constraints or model defaults
             if each_reaction in flux_constraints:
-                v[each_reaction] = m.addVar(lb=flux_constraints[each_reaction][0],
-                                            ub=flux_constraints[each_reaction][1], 
-                                            name=each_reaction)
+                v[each_reaction] = Variable(
+                    each_reaction,
+                    lb=flux_constraints[each_reaction][0],
+                    ub=flux_constraints[each_reaction][1]
+                )
             else:
-                v[each_reaction] = m.addVar(lb=lower_boundary_constraints[each_reaction],
-                                            ub=upper_boundary_constraints[each_reaction],
-                                            name=each_reaction)
+                v[each_reaction] = Variable(
+                    each_reaction,
+                    lb=lower_boundary_constraints[each_reaction],
+                    ub=upper_boundary_constraints[each_reaction]
+                )
             # Auxiliary variables for pFBA
-            fplus[each_reaction] = m.addVar(lb=0.0, ub=1000.0, name=f"fplus_{each_reaction}")
-            fminus[each_reaction] = m.addVar(lb=0.0, ub=1000.0, name=f"fminus_{each_reaction}")
-        
-        m.update()
+            fplus[each_reaction] = Variable(f"fplus_{each_reaction}", lb=0.0, ub=1000.0)
+            fminus[each_reaction] = Variable(f"fminus_{each_reaction}", lb=0.0, ub=1000.0)
+
+            variables_to_add.extend([v[each_reaction], fplus[each_reaction], fminus[each_reaction]])
+
+        m.add(variables_to_add)
 
         # Add steady-state mass balance constraints (Sv = 0)
-        for each_metabolite in model_metabolites:
-            if len(pairs.select(each_metabolite, '*')) == 0:
-                continue
-            m.addConstr(quicksum(
-                v[reaction] * coffvalue[metabolite, reaction] 
-                for metabolite, reaction in pairs.select(each_metabolite, '*')) == 0,
-                name=f"mass_balance_{each_metabolite}")
+        mass_balance_constraints = []
 
-        m.update()
-        
+        for each_metabolite in model_metabolites:
+            # Find all reactions involving this metabolite
+            metabolite_reactions = [(met, rxn) for (met, rxn) in Smatrix.keys() if met == each_metabolite]
+
+            if len(metabolite_reactions) == 0:
+                continue
+
+            # Create mass balance expression: sum(S_ij * v_j) = 0
+            expr = sum(v[reaction] * Smatrix[metabolite, reaction]
+                      for metabolite, reaction in metabolite_reactions)
+
+            mass_balance_constraints.append(Constraint(
+                expr, lb=0, ub=0,
+                name=f"mass_balance_{each_metabolite}"
+            ))
+
+        m.add(mass_balance_constraints)
+
         # Set primary objective (maximize or minimize target reaction flux)
         if mode == 'max':
-            m.setObjective(v[objective], GRB.MAXIMIZE)
+            m.objective = Objective(v[objective], direction='max')
         elif mode == 'min':
-            m.setObjective(v[objective], GRB.MINIMIZE)
+            m.objective = Objective(v[objective], direction='min')
 
         # Solve primary optimization
         m.optimize()
-        
-        if m.status == 2:  # GRB.OPTIMAL
-            objective_value = m.ObjVal
-            
+
+        if m.status == 'optimal':
+            objective_value = m.objective.value
+
             # Parsimonious FBA: minimize total flux while maintaining optimal objective
             if internal_flux_minimization:
                 # Fix objective flux to optimal value
-                m.addConstr(v[objective] == objective_value, name="fix_objective")
+                m.add(Constraint(v[objective], lb=objective_value, ub=objective_value, name="fix_objective"))
 
                 # Add flux decomposition constraints for all reactions
+                pfba_constraints = []
                 for each_reaction in model_reactions:
-                    m.addConstr(fplus[each_reaction] - fminus[each_reaction] == v[each_reaction],
-                               name=f"flux_decomp_{each_reaction}")
+                    pfba_constraints.append(Constraint(
+                        fplus[each_reaction] - fminus[each_reaction] - v[each_reaction],
+                        lb=0, ub=0,
+                        name=f"flux_decomp_{each_reaction}"
+                    ))
 
-                m.update()
-                
+                m.add(pfba_constraints)
+
                 # New objective: minimize sum of absolute fluxes
-                m.setObjective(
-                    quicksum((fplus[each_reaction] + fminus[each_reaction]) 
-                            for each_reaction in model_reactions),
-                    GRB.MINIMIZE)
-                
+                objective_expr = sum((fplus[each_reaction] + fminus[each_reaction])
+                                    for each_reaction in model_reactions)
+                m.objective = Objective(objective_expr, direction='min')
+
                 # Solve secondary optimization
                 m.optimize()
-                
-                if m.status == 2:  # GRB.OPTIMAL
-                    objective_value = m.ObjVal  # Total flux sum
+
+                if m.status == 'optimal':
+                    objective_value = m.objective.value  # Total flux sum
                     flux_distribution = {}
                     for reaction in model_reactions:
-                        flux_distribution[reaction] = float(v[reaction].x)
+                        flux_distribution[reaction] = float(v[reaction].primal)
                         # Round near-zero values to exactly zero
-                        if abs(float(v[reaction].x)) <= 1e-6:
+                        if abs(float(v[reaction].primal)) <= 1e-6:
                             flux_distribution[reaction] = 0.0
                     return m.status, objective_value, flux_distribution
                 else:
@@ -467,12 +519,12 @@ class Simulator(object):
                 # Standard FBA: return optimal flux distribution
                 flux_distribution = {}
                 for reaction in model_reactions:
-                    flux_distribution[reaction] = float(v[reaction].x)
+                    flux_distribution[reaction] = float(v[reaction].primal)
                     # Round near-zero values to exactly zero
-                    if abs(float(v[reaction].x)) <= 1e-6:
+                    if abs(float(v[reaction].primal)) <= 1e-6:
                         flux_distribution[reaction] = 0.0
                 return m.status, objective_value, flux_distribution
-        
+
         return m.status, False, False
 
     def read_model(self, filename):
