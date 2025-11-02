@@ -3,7 +3,7 @@ from cobra import Model
 from cobra.util.solver import linear_reaction_coefficients
 
 # --- 1. 모델 불러오기 ---
-model: Model = cobra.io.read_sbml_model("./new_model_M9.xml")
+model: Model = cobra.io.read_sbml_model("./new_model_M9_biomass.xml")
 
 # --- 2. Growth 반응을 objective로 설정 ---
 # 우선적으로 ID가 'Growth'인 반응을 찾고, 없으면 이름/부분일치로 탐색
