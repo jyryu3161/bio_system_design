@@ -53,7 +53,7 @@ def main():
 
     # 4) Gap-fill 실행 (한 개 해 찾기)
     print("[info] Running gap-filling (searching for 1 solution)...")
-    solutions = gapfiller.fill(n_solutions=1)
+    solutions = gapfiller.fill(iterations=1)   # iterations=1이면 한 개 솔루션
     if not solutions:
         print("[error] No gap-filling solution found. Check medium/objective/universal model.")
         sys.exit(2)
