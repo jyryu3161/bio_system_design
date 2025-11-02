@@ -3,7 +3,7 @@ import cobra
 # --- 1. 모델 불러오기 ---
 # 예: XML(SBML) 형식의 모델 불러오기
 # (경로는 사용자 모델 파일 경로로 변경)
-model = cobra.io.read_sbml_model("path/to/model.xml")
+model = cobra.io.read_sbml_model("../new_model.xml")
 
 # --- 2. 모델 기본 정보 출력 ---
 print("===== Model Basic Information =====")
