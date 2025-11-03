@@ -350,7 +350,7 @@ class Simulator(object):
             return m.status, False, False
 
     def run_FBA(self, new_objective='', flux_constraints={}, inf_flag=False, 
-                internal_flux_minimization=False, mode='max'):
+                internal_flux_minimization=True, mode='max'):
         """
         Flux Balance Analysis (FBA).
         
@@ -837,3 +837,4 @@ if __name__ == "__main__":
     # Use textbook model by default (smaller and faster for testing)
     # You can also use: test_simulator_comparison("iJO1366")
     test_simulator_comparison("textbook")
+
