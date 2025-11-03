@@ -4,11 +4,11 @@ from optlang import Model, Variable, Constraint, Objective
 
 class Simulator(object):
     """
-    Constraint-based metabolic model simulator implementing FBA, MOMA, and ROOM methods.
+    Constraint-based metabolic model simulator implementing FBA, Linear MOMA, and ROOM methods.
     
     This class provides methods for:
     - Flux Balance Analysis (FBA)
-    - Minimization of Metabolic Adjustment (MOMA)
+    - Linear Minimization of Metabolic Adjustment (Linear MOMA)
     - Regulatory On/Off Minimization (ROOM)
     """
     
@@ -30,11 +30,12 @@ class Simulator(object):
 
     def run_MOMA(self, wild_flux={}, flux_constraints={}, inf_flag=False):
         """
-        Minimization of Metabolic Adjustment (MOMA) analysis.
+        Linear MOMA (Minimization of Metabolic Adjustment) analysis.
         
-        MOMA finds a flux distribution that minimizes the Euclidean distance
+        Linear MOMA finds a flux distribution that minimizes the Manhattan distance (L1 norm)
         to a reference (wild-type) flux distribution while satisfying stoichiometric
-        and flux bound constraints.
+        and flux bound constraints. This is computationally more efficient than
+        quadratic MOMA while providing similar biological insights.
         
         Parameters:
         -----------
@@ -50,14 +51,15 @@ class Simulator(object):
         Returns:
         --------
         tuple: (status, objective_value, flux_distribution)
-            - status: Gurobi optimization status (2 = optimal)
-            - objective_value: Minimized distance metric
+            - status: Optimization status ('optimal' if successful)
+            - objective_value: Minimized Manhattan distance (sum of absolute deviations)
             - flux_distribution: Dict of reaction IDs to flux values
             
         Notes:
         ------
-        The objective minimizes: sum((v - w)^2) where v is mutant flux and w is wild-type flux.
-        This is linearized using auxiliary variables fplus and fminus.
+        The objective minimizes: sum(|v - w|) where v is mutant flux and w is wild-type flux.
+        This is implemented using auxiliary variables: |v - w| = fplus + fminus
+        where v - w = fplus - fminus, fplus >= 0, fminus >= 0.
         """
         model_metabolites = self.model_metabolites
         model_reactions = self.model_reactions
@@ -76,7 +78,7 @@ class Simulator(object):
                     upper_boundary_constraints[key] = 1000.0
 
         # Create optlang model
-        m = Model(name='MOMA')
+        m = Model(name='Linear_MOMA')
 
         # Create variables
         v = {}  # Flux variables
@@ -107,29 +109,21 @@ class Simulator(object):
 
         m.add(variables_to_add)
 
-        # Add constraints relating flux to deviations
+        # Add constraints for absolute value decomposition
+        # For each reaction: v - w = fplus - fminus
+        # This means: |v - w| = fplus + fminus (when both are minimized)
         constraints = []
 
         for each_reaction in model_reactions:
-            # v = fplus - fminus (flux decomposition)
-            constraints.append(Constraint(
-                v[each_reaction] - fplus[each_reaction] + fminus[each_reaction],
-                lb=0, ub=0,
-                name=f"flux_decomp_{each_reaction}"
-            ))
-
-            # fplus >= v - wild_flux (captures positive deviation)
             if each_reaction in wild_flux:
+                w = wild_flux[each_reaction]  # Wild-type flux
+                
+                # Constraint: v - w = fplus - fminus
+                # Rearranged: v - fplus + fminus = w
                 constraints.append(Constraint(
-                    fplus[each_reaction] - v[each_reaction] + wild_flux[each_reaction],
-                    lb=0,
-                    name=f"fplus_lb_{each_reaction}"
-                ))
-                # fminus >= wild_flux - v (captures negative deviation)
-                constraints.append(Constraint(
-                    fminus[each_reaction] + v[each_reaction] - wild_flux[each_reaction],
-                    lb=0,
-                    name=f"fminus_lb_{each_reaction}"
+                    v[each_reaction] - fplus[each_reaction] + fminus[each_reaction],
+                    lb=w, ub=w,
+                    name=f"abs_decomp_{each_reaction}"
                 ))
 
         m.add(constraints)
@@ -155,8 +149,7 @@ class Simulator(object):
 
         m.add(mass_balance_constraints)
 
-        # Set objective: minimize sum of absolute deviations
-        # This approximates Euclidean distance minimization
+        # Set objective: minimize sum of absolute deviations (Manhattan distance)
         target_reactions = wild_flux.keys()
         objective_expr = sum((fplus[each_reaction] + fminus[each_reaction])
                             for each_reaction in target_reactions)
@@ -641,7 +634,7 @@ class Simulator(object):
 def test_simulator_comparison(model_name="iJO1366"):
     """
     Test function to compare Simulator (optlang) results with COBRApy results
-    using E. coli model for FBA, MOMA, and ROOM analyses.
+    using E. coli model for FBA, Linear MOMA, and ROOM analyses.
 
     Parameters:
     -----------
@@ -742,22 +735,22 @@ def test_simulator_comparison(model_name="iJO1366"):
     cobra_model_ko = cobra_model.copy()
     cobra_model_ko.reactions.get_by_id(knockout_reaction).bounds = (0, 0)
 
-    # ===== MOMA Test =====
+    # ===== Linear MOMA Test =====
     print("\n" + "="*80)
-    print("[4] MOMA (Minimization of Metabolic Adjustment) Comparison")
+    print("[4] Linear MOMA (Minimization of Metabolic Adjustment) Comparison")
     print("="*80)
 
-    # Simulator MOMA
-    print("\nRunning Simulator MOMA...")
+    # Simulator Linear MOMA
+    print("\nRunning Simulator Linear MOMA...")
     sim_moma_status, sim_moma_obj, sim_moma_flux = sim.run_MOMA(
         wild_flux=wild_flux,
         flux_constraints=knockout_constraints
     )
     print(f"  Status: {sim_moma_status}")
-    print(f"  Objective value (distance): {sim_moma_obj:.6f}")
+    print(f"  Objective value (Manhattan distance): {sim_moma_obj:.6f}")
 
-    # COBRApy MOMA
-    print("\nRunning COBRApy MOMA...")
+    # COBRApy Linear MOMA
+    print("\nRunning COBRApy Linear MOMA...")
     try:
         cobra_moma_solution = moma(cobra_model_ko, solution=cobra_solution, linear=True)
         cobra_moma_obj = cobra_moma_solution.objective_value
@@ -766,7 +759,7 @@ def test_simulator_comparison(model_name="iJO1366"):
         print(f"  Objective value: {cobra_moma_obj:.6f}")
 
         # Compare MOMA results
-        print("\nMOMA Comparison:")
+        print("\nLinear MOMA Comparison:")
         moma_obj_diff = abs(sim_moma_obj - cobra_moma_obj)
         print(f"  Objective difference: {moma_obj_diff:.10f}")
 
@@ -844,5 +837,3 @@ if __name__ == "__main__":
     # Use textbook model by default (smaller and faster for testing)
     # You can also use: test_simulator_comparison("iJO1366")
     test_simulator_comparison("textbook")
-
-
