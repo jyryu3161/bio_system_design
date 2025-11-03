@@ -1,6 +1,6 @@
 # Design of Biological Systems
 
-## CPLEX 설치
+## CarveMe practice
 [CarveMe Tutorial](CarveMe.md)
 
 ## Simulator
