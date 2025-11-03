@@ -24,7 +24,7 @@
 **예제**:
 ```python
 import cobra
-from simulator_linear_moma import Simulator
+from Simulator import Simulator
 
 # Load model
 model = cobra.io.load_model("textbook")
@@ -103,7 +103,7 @@ for metabolic engineering applications.
 """
 
 import cobra
-from simulator_linear_moma import Simulator
+from Simulator import Simulator
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -258,16 +258,16 @@ print("\n" + "="*60)
 
 ```bash
 # Run all tests with textbook model (fast)
-python simulator_linear_moma.py
+python Simulator.py
 
 # Run only FSEOF/FVSEOF tests
-python simulator_linear_moma.py fseof textbook
+python Simulator.py fseof textbook
 
 # Run comparison tests with larger model
-python simulator_linear_moma.py comparison iJO1366
+python Simulator.py comparison iJO1366
 
 # Run all tests with E. coli core model
-python simulator_linear_moma.py all e_coli_core
+python Simulator.py all e_coli_core
 ```
 
 ## Applications
