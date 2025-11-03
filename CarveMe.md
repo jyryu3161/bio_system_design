@@ -87,7 +87,7 @@ pixi shell
 - **MEMOTE**: SBML 표준 준수 여부, 질량/전하 균형 등 모델 품질 검증
 - **DIAMOND**: BLAST보다 빠른 단백질 상동성 검색으로 대사 효소 예측
 
-## CPLEX 솔버 설치
+## CPLEX solver 설치
 
 CPLEX는 선형 계획법(Linear Programming) 문제를 효율적으로 해결하는 상용 솔버로, 대사 모델의 FBA 계산에 사용됩니다.
 
@@ -165,7 +165,7 @@ gapfill model.xml \
 git clone https://github.com/jyryu3161/bio_system_design.git
 ```
 
-### 1. 초기 모델 분석
+### 초기 모델 분석
 
 ```bash
 # 모델의 기본 통계 및 biomass 반응 확인
@@ -179,26 +179,6 @@ python ./bio_system_design/cobrapy_report.py \
 - Biomass 반응 조성
 - 기본 FBA 시뮬레이션 결과
 
-### 2. M9 배지 조건 설정
-
-```bash
-# M9 최소배지 조건으로 교환 반응 설정
-python ./bio_system_design/set_M9_medium.py \
-  new_model_biomass.xml \
-  new_model_biomass_M9.xml >> output.txt
-```
-
-**기능**: 모델의 교환 반응(exchange reactions)을 M9 배지 조성에 맞게 조정하여 현실적인 배지 조건을 반영합니다.
-
-### 3. 참조 모델 기반 Gap-filling
-
-```bash
-# iML1515 참조 모델을 사용한 추가 gap-filling
-python ./bio_system_design/run_gapfilling.py \
-  new_model_biomass_M9.xml \
-  ./bio_system_design/iML1515.xml \
-  new_model_biomass_M9_gapfill.xml
-```
 
 **설명**:
 - **iML1515**: 수작업으로 큐레이션된 고품질 대장균 대사 모델
@@ -219,7 +199,7 @@ python ./bio_system_design/run_gapfilling.py \
 
 ```bash
 # MEMOTE를 사용한 포괄적인 품질 평가
-memote report snapshot new_model_biomass_M9_gapfill.xml --filename report.html
+memote report snapshot new_model_biomass.xml --filename report.html
 ```
 
 ### 모델 활용 예시
