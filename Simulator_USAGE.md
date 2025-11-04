@@ -126,6 +126,10 @@ Available solvers: cplex (또는 scip)
 
 ## 빠른 시작
 
+```
+cd simulator_examples
+```
+
 ### 1. 기본 FBA 분석
 
 ```python
