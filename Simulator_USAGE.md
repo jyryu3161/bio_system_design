@@ -96,6 +96,7 @@ python
 >>> import cobra
 >>> print(f"COBRApy version: {cobra.__version__}")
 >>> print(f"CPLEX version: {cplex.__version__}")
+>>> exit()
 ```
 
 ### Step 5: 설치 확인
