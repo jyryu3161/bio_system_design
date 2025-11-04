@@ -85,7 +85,7 @@ chmod +x cplex_studio2211.linux-x86-64.bin
 cd /home/biosys/solver/cplex/python/3.10/x86-64_linux  # CPLEX 설치 경로에 맞게 수정
 
 # CPLEX Python 모듈 설치
-python setup.py install
+pixi run python setup.py install
 ```
 
 4. **설치 확인**:
