@@ -126,11 +126,96 @@ Available solvers: cplex (또는 scip)
 
 ## 빠른 시작
 
-```
-cd simulator_examples
+### Python 스크립트로 실행
+
+```bash
+cd simulator_tutorials
+python 1_simple_fba.py
 ```
 
-첨부하신 README를 기반으로 각 예제를 독립적으로 실행 가능한 개별 파일로 수정하겠습니다.
+### Jupyter Notebook/Lab으로 실행
+
+Pixi 환경은 Jupyter Notebook 및 JupyterLab과 완벽하게 통합됩니다. 두 가지 방법으로 사용할 수 있습니다:
+
+#### 방법 1: JupyterLab 실행 (권장)
+
+```bash
+# Pixi 환경에서 JupyterLab 실행
+pixi run jupyter lab
+
+# 또는 특정 포트로 실행
+pixi run jupyter lab --port=8888
+```
+
+브라우저가 자동으로 열리면 `simulator_tutorials` 폴더로 이동하여 예제 코드를 Jupyter 노트북으로 변환하거나 새 노트북을 생성할 수 있습니다.
+
+#### 방법 2: Jupyter Notebook 실행
+
+```bash
+# Pixi 환경에서 Jupyter Notebook 실행
+pixi run jupyter notebook
+
+# simulator_tutorials 폴더에서 바로 시작
+cd simulator_tutorials
+pixi run jupyter notebook
+```
+
+#### Jupyter에서 Pixi 환경 사용하기
+
+Pixi 환경의 Python kernel은 자동으로 등록됩니다. Jupyter에서 새 노트북을 생성할 때 **Python 3 (ipykernel)** 을 선택하면 pixi 환경의 모든 패키지(COBRApy, Simulator 등)를 사용할 수 있습니다.
+
+확인 방법:
+```python
+# Jupyter 노트북 셀에서 실행
+import sys
+print(f"Python path: {sys.executable}")
+
+import cobra
+from Simulator import Simulator
+print("✓ Simulator 및 COBRApy 사용 가능!")
+```
+
+#### Jupyter Notebook 예제 실행
+
+`simulator_tutorials` 폴더에서 예제 Python 파일들을 Jupyter 노트북으로 변환하거나, 새 노트북을 만들어 다음과 같이 사용할 수 있습니다:
+
+```python
+# 노트북 셀 1: 라이브러리 임포트
+from Simulator import Simulator
+import cobra
+import pandas as pd
+
+# 노트북 셀 2: 모델 로드
+sim = Simulator()
+model = cobra.io.load_model("iML1515")
+sim.load_cobra_model(model)
+
+# 노트북 셀 3: FBA 실행
+status, growth, fluxes = sim.run_FBA()
+print(f"최적 성장 속도: {growth:.4f} hr⁻¹")
+
+# 노트북 셀 4: 결과 시각화
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# 상위 20개 플럭스 시각화
+top_fluxes = sorted(fluxes.items(), key=lambda x: abs(x[1]), reverse=True)[:20]
+rxn_names, flux_values = zip(*top_fluxes)
+
+plt.figure(figsize=(10, 6))
+plt.barh(range(len(flux_values)), flux_values)
+plt.yticks(range(len(rxn_names)), rxn_names)
+plt.xlabel('Flux (mmol/gDW/hr)')
+plt.title('Top 20 Reactions by Flux')
+plt.tight_layout()
+plt.show()
+```
+
+#### Jupyter 환경 종료
+
+Jupyter를 종료하려면 터미널에서 `Ctrl + C`를 두 번 누르고 `y`를 입력하세요.
+
+## 예제 코드
 
 ```python
 # 1_simple_fba.py
