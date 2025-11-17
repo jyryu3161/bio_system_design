@@ -349,173 +349,119 @@ class Simulator(object):
         else:
             return m.status, False, False
 
-    def run_FSEOF(self, target_reaction, objective_fraction=1.0, flux_constraints={}, inf_flag=False):
+    def run_FSEOF(self, target_reaction, objective_fraction=1.0, flux_constraints={}, 
+                  n_points=10, inf_flag=False):
         """
         Flux Scanning based on Enforced Objective Flux (FSEOF).
-        
-        FSEOF systematically scans through the possible flux range of a target reaction
-        while maintaining a minimum objective flux (e.g., biomass production). This method
-        identifies the feasible flux range of the target reaction under constrained growth.
         
         Parameters:
         -----------
         target_reaction : str
-            Reaction ID to scan (e.g., a production or secretion reaction).
-        objective_fraction : float, optional (default=1.0)
-            Fraction of maximum objective flux to maintain (0 to 1).
-            e.g., 0.9 means maintain at least 90% of maximum growth.
+            Reaction ID to scan
+        objective_fraction : float
+            Fraction of maximum objective flux to maintain
+        n_points : int
+            Number of scanning points between min and max flux
         flux_constraints : dict
-            Additional flux constraints. Keys are reaction IDs, values are tuples
-            of (lower_bound, upper_bound).
-        inf_flag : bool, optional (default=False)
-            If False, replaces infinite bounds with ±1000.
+            Additional flux constraints
+        inf_flag : bool
+            If False, replaces infinite bounds with ±1000
             
         Returns:
         --------
-        tuple: (status, min_flux, max_flux, flux_range)
-            - status: 'optimal' if successful
-            - min_flux: Minimum feasible flux through target reaction
-            - max_flux: Maximum feasible flux through target reaction
-            - flux_range: Dict with 'min' and 'max' flux distributions
-            
-        Notes:
-        ------
-        FSEOF is useful for:
-        - Identifying production envelopes (what can be produced at X% growth)
-        - Finding metabolic bottlenecks
-        - Analyzing trade-offs between growth and production
+        tuple: (status, results_df, correlations_df)
+            - status: 'optimal' or 'failed'
+            - results_df: DataFrame with columns [target_flux, objective_flux, reaction1, reaction2, ...]
+            - correlations_df: DataFrame with correlation coefficients
         """
-        # First, find maximum objective value
+        import pandas as pd
+        import numpy as np
+        
+        # Step 1: Find maximum objective value
         fba_status, max_obj_value, _ = self.run_FBA(
             flux_constraints=flux_constraints,
             inf_flag=inf_flag
         )
         
         if fba_status != 'optimal':
-            return fba_status, False, False, False
+            return fba_status, None, None
         
-        # Calculate minimum required objective flux
+        # Step 2: Set minimum objective constraint
         min_obj_flux = objective_fraction * max_obj_value
-        
-        # Add constraint to maintain minimum objective
         objective = self.objective
         fseof_constraints = flux_constraints.copy()
         fseof_constraints[objective] = (min_obj_flux, float('inf'))
         
-        # Minimize target reaction flux
-        min_status, min_flux_val, min_flux_dist = self.run_FBA(
+        # Step 3: Find target reaction's feasible range
+        min_status, min_flux_val, _ = self.run_FBA(
             new_objective=target_reaction,
             flux_constraints=fseof_constraints,
             inf_flag=inf_flag,
             mode='min'
         )
         
-        # Maximize target reaction flux
-        max_status, max_flux_val, max_flux_dist = self.run_FBA(
+        max_status, max_flux_val, _ = self.run_FBA(
             new_objective=target_reaction,
             flux_constraints=fseof_constraints,
             inf_flag=inf_flag,
             mode='max'
         )
         
-        if min_status == 'optimal' and max_status == 'optimal':
-            return 'optimal', min_flux_val, max_flux_val, {
-                'min': min_flux_dist,
-                'max': max_flux_dist
-            }
-        else:
-            return 'failed', False, False, False
-
-    def run_FVSEOF(self, target_reaction, objective_fraction=1.0, num_points=10, 
-                   flux_constraints={}, inf_flag=False):
-        """
-        Flux Variability Scanning based on Enforced Objective Flux (FVSEOF).
+        if min_status != 'optimal' or max_status != 'optimal':
+            return 'failed', None, None
         
-        FVSEOF extends FSEOF by performing flux variability analysis (FVA) at multiple
-        enforced flux levels of the target reaction. This provides a comprehensive view
-        of how metabolic flexibility changes as the target flux varies.
+        # Step 4: Generate scan points
+        scan_points = np.linspace(min_flux_val, max_flux_val, n_points)
         
-        Parameters:
-        -----------
-        target_reaction : str
-            Reaction ID to scan (e.g., a production or secretion reaction).
-        objective_fraction : float, optional (default=1.0)
-            Fraction of maximum objective flux to maintain (0 to 1).
-        num_points : int, optional (default=10)
-            Number of flux points to sample between min and max target flux.
-        flux_constraints : dict
-            Additional flux constraints. Keys are reaction IDs, values are tuples
-            of (lower_bound, upper_bound).
-        inf_flag : bool, optional (default=False)
-            If False, replaces infinite bounds with ±1000.
+        # Step 5: Scan through each point
+        flux_data = []
+        
+        for target_flux in scan_points:
+            # Fix target reaction at current scan point
+            scan_constraints = fseof_constraints.copy()
+            scan_constraints[target_reaction] = (target_flux, target_flux)
             
-        Returns:
-        --------
-        tuple: (status, fvseof_results)
-            - status: 'optimal' if successful
-            - fvseof_results: Dict containing:
-                - 'target_fluxes': List of enforced target flux values
-                - 'fva_results': List of FVA results for each target flux
-                - 'objective_fluxes': Actual objective fluxes at each point
-                
-        Notes:
-        ------
-        FVSEOF is particularly useful for:
-        - Mapping production envelopes with metabolic flexibility
-        - Understanding flux coupling at different production levels
-        - Identifying optimal operating points for bioprocess design
-        - Revealing metabolic constraints and regulatory patterns
-        """
-        # First, determine feasible range of target reaction
-        fseof_status, min_target_flux, max_target_flux, _ = self.run_FSEOF(
-            target_reaction=target_reaction,
-            objective_fraction=objective_fraction,
-            flux_constraints=flux_constraints,
-            inf_flag=inf_flag
-        )
-        
-        if fseof_status != 'optimal':
-            return fseof_status, False
-        
-        # Generate flux points to sample
-        import numpy as np
-        if abs(max_target_flux - min_target_flux) < 1e-6:
-            # If range is very small, just use one point
-            target_flux_points = [min_target_flux]
-        else:
-            target_flux_points = np.linspace(min_target_flux, max_target_flux, num_points)
-        
-        # Storage for results
-        fvseof_results = {
-            'target_fluxes': [],
-            'fva_results': [],
-            'objective_fluxes': []
-        }
-        
-        # For each target flux point, perform FVA
-        for target_flux in target_flux_points:
-            # Fix target reaction flux
-            point_constraints = flux_constraints.copy()
-            point_constraints[target_reaction] = (target_flux, target_flux)
-            
-            # Perform FVA (get min/max for all reactions)
-            fva_result = self.run_FVA(
-                flux_constraints=point_constraints,
+            # Run FBA
+            status, obj_val, flux_dist = self.run_FBA(
+                flux_constraints=scan_constraints,
                 inf_flag=inf_flag
             )
             
-            if fva_result['status'] == 'optimal':
-                fvseof_results['target_fluxes'].append(target_flux)
-                fvseof_results['fva_results'].append(fva_result)
-                
-                # Record actual objective flux at this point
-                obj_flux = fva_result['fva_data'][self.objective]
-                fvseof_results['objective_fluxes'].append(obj_flux)
+            if status == 'optimal':
+                # Store flux distribution with target and objective values
+                row_data = flux_dist.copy()
+                row_data['target_flux'] = target_flux
+                row_data['objective_flux'] = obj_val
+                flux_data.append(row_data)
         
-        if len(fvseof_results['target_fluxes']) > 0:
-            return 'optimal', fvseof_results
-        else:
-            return 'failed', False
+        if not flux_data:
+            return 'failed', None, None
+        
+        # Step 6: Create results DataFrame
+        results_df = pd.DataFrame(flux_data)
+        
+        # Reorder columns: target_flux, objective_flux, then all reactions
+        cols = ['target_flux', 'objective_flux'] + [col for col in results_df.columns 
+                                                      if col not in ['target_flux', 'objective_flux']]
+        results_df = results_df[cols]
+        
+        # Step 7: Calculate correlations with target reaction
+        reaction_columns = [col for col in results_df.columns 
+                            if col not in ['target_flux', 'objective_flux']]
+        
+        correlations = {}
+        for rxn in reaction_columns:
+            corr = results_df['target_flux'].corr(results_df[rxn])
+            correlations[rxn] = corr
+        
+        # Create correlations DataFrame
+        correlations_df = pd.DataFrame([
+            {'reaction': rxn, 'correlation': corr, 'abs_correlation': abs(corr)}
+            for rxn, corr in correlations.items()
+        ]).sort_values('abs_correlation', ascending=False).reset_index(drop=True)
+        
+        return 'optimal', results_df, correlations_df
+
 
     def run_FVA(self, fraction_of_optimum=1.0, flux_constraints={}, inf_flag=False, 
                 reactions_to_analyze=None):
@@ -534,7 +480,7 @@ class Simulator(object):
             Additional flux constraints. Keys are reaction IDs, values are tuples
             of (lower_bound, upper_bound).
         inf_flag : bool, optional (default=False)
-            If False, replaces infinite bounds with ±1000.
+            If False, replaces infinite boundobjective_fractions with ±1000.
         reactions_to_analyze : list, optional
             List of reaction IDs to analyze. If None, analyzes all reactions.
             
@@ -881,225 +827,6 @@ class Simulator(object):
                 upper_boundary_constraints, objective_reaction)
 
 
-def test_fseof_fvseof(model_name="textbook"):
-    """
-    Test function for FSEOF and FVSEOF analyses.
-    
-    Parameters:
-    -----------
-    model_name : str, optional (default="textbook")
-        Model to test. Options: "iJO1366", "textbook", "e_coli_core"
-    """
-    import cobra
-    import numpy as np
-    import matplotlib.pyplot as plt
-    
-    print("="*80)
-    print(f"Testing FSEOF and FVSEOF with {model_name} model")
-    print("="*80)
-    
-    # Load model
-    print(f"\n[1] Loading {model_name} model...")
-    try:
-        cobra_model = cobra.io.load_model(model_name)
-        print(f"✓ Model loaded: {len(cobra_model.reactions)} reactions, {len(cobra_model.metabolites)} metabolites")
-    except Exception as e:
-        print(f"✗ Failed to load model: {e}")
-        return
-    
-    # Initialize Simulator
-    sim = Simulator()
-    sim.load_cobra_model(cobra_model)
-    
-    # Find a suitable target reaction (e.g., acetate secretion)
-    target_reaction = None
-    for rxn_id in ['EX_ac_e', 'EX_etoh_e', 'EX_succ_e', 'EX_lac__D_e']:
-        if rxn_id in sim.model_reactions:
-            target_reaction = rxn_id
-            break
-    
-    if target_reaction is None:
-        # Use first exchange reaction
-        target_reaction = [r for r in sim.model_reactions if r.startswith('EX_')][0]
-    
-    print(f"  Target reaction: {target_reaction}")
-    print(f"  Objective reaction: {sim.objective}")
-    
-    # ===== FSEOF Test =====
-    print("\n" + "="*80)
-    print("[2] FSEOF (Flux Scanning based on Enforced Objective Flux)")
-    print("="*80)
-    
-    print("\nRunning FSEOF at 100% optimal growth...")
-    fseof_status, min_flux, max_flux, flux_range = sim.run_FSEOF(
-        target_reaction=target_reaction,
-        objective_fraction=1.0
-    )
-    
-    if fseof_status == 'optimal':
-        print(f"✓ FSEOF completed successfully")
-        print(f"  Target reaction flux range at 100% growth:")
-        print(f"    Minimum: {min_flux:.6f}")
-        print(f"    Maximum: {max_flux:.6f}")
-        print(f"    Range: {max_flux - min_flux:.6f}")
-        print(f"  Objective flux in min case: {flux_range['min'][sim.objective]:.6f}")
-        print(f"  Objective flux in max case: {flux_range['max'][sim.objective]:.6f}")
-    else:
-        print(f"✗ FSEOF failed with status: {fseof_status}")
-        return
-    
-    # Test at different objective fractions
-    print("\nScanning at different growth rates:")
-    fractions = [1.0, 0.9, 0.7, 0.5, 0.3, 0.1]
-    fseof_envelope = []
-    
-    for frac in fractions:
-        status, min_f, max_f, _ = sim.run_FSEOF(
-            target_reaction=target_reaction,
-            objective_fraction=frac
-        )
-        if status == 'optimal':
-            fseof_envelope.append({
-                'fraction': frac,
-                'min': min_f,
-                'max': max_f
-            })
-            print(f"  {frac*100:>5.1f}% growth: [{min_f:>8.4f}, {max_f:>8.4f}]")
-    
-    # ===== FVA Test =====
-    print("\n" + "="*80)
-    print("[3] FVA (Flux Variability Analysis)")
-    print("="*80)
-    
-    print("\nRunning FVA on subset of reactions...")
-    # Analyze a subset of reactions for speed
-    reactions_to_test = sim.model_reactions[:10]
-    
-    fva_result = sim.run_FVA(
-        fraction_of_optimum=0.9,
-        reactions_to_analyze=reactions_to_test
-    )
-    
-    if fva_result['status'] == 'optimal':
-        print(f"✓ FVA completed successfully")
-        print(f"  Objective value: {fva_result['objective_value']:.6f}")
-        print(f"\n  Sample results (first 5 reactions):")
-        for i, rxn in enumerate(reactions_to_test[:5]):
-            fva_data = fva_result['fva_data'][rxn]
-            print(f"    {rxn:20s}: [{fva_data['minimum']:>8.4f}, {fva_data['maximum']:>8.4f}] (range: {fva_data['range']:>8.4f})")
-    
-    # ===== FVSEOF Test =====
-    print("\n" + "="*80)
-    print("[4] FVSEOF (Flux Variability Scanning based on Enforced Objective Flux)")
-    print("="*80)
-    
-    print(f"\nRunning FVSEOF with {target_reaction}...")
-    print("  (This may take a moment...)")
-    
-    fvseof_status, fvseof_results = sim.run_FVSEOF(
-        target_reaction=target_reaction,
-        objective_fraction=0.9,
-        num_points=5  # Use fewer points for faster testing
-    )
-    
-    if fvseof_status == 'optimal':
-        print(f"✓ FVSEOF completed successfully")
-        print(f"  Number of points analyzed: {len(fvseof_results['target_fluxes'])}")
-        print(f"\n  Results summary:")
-        
-        for i, target_flux in enumerate(fvseof_results['target_fluxes']):
-            obj_flux = fvseof_results['objective_fluxes'][i]
-            print(f"    Point {i+1}: Target={target_flux:>8.4f}, Objective={obj_flux['minimum']:>8.4f}-{obj_flux['maximum']:>8.4f}")
-        
-        # Analyze flux variability at each point
-        print(f"\n  Analyzing metabolic flexibility:")
-        flexibility_scores = []
-        
-        for i, fva_data in enumerate(fvseof_results['fva_results']):
-            # Calculate average flux range as a measure of flexibility
-            ranges = [data['range'] for data in fva_data['fva_data'].values()]
-            avg_range = np.mean(ranges)
-            flexibility_scores.append(avg_range)
-            print(f"    Point {i+1}: Average flux range = {avg_range:.4f}")
-        
-        # ===== Visualization =====
-        print("\n" + "="*80)
-        print("[5] Generating visualizations")
-        print("="*80)
-        
-        try:
-            fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-            
-            # Plot 1: FSEOF envelope
-            ax1 = axes[0, 0]
-            fracs = [e['fraction'] for e in fseof_envelope]
-            mins = [e['min'] for e in fseof_envelope]
-            maxs = [e['max'] for e in fseof_envelope]
-            
-            ax1.fill_between(fracs, mins, maxs, alpha=0.3, color='blue')
-            ax1.plot(fracs, mins, 'b-', marker='o', label='Minimum')
-            ax1.plot(fracs, maxs, 'r-', marker='s', label='Maximum')
-            ax1.set_xlabel('Objective Fraction')
-            ax1.set_ylabel(f'{target_reaction} Flux')
-            ax1.set_title('FSEOF: Production Envelope')
-            ax1.legend()
-            ax1.grid(True, alpha=0.3)
-            
-            # Plot 2: FVSEOF - Target vs Objective
-            ax2 = axes[0, 1]
-            target_fluxes = fvseof_results['target_fluxes']
-            obj_mins = [obj['minimum'] for obj in fvseof_results['objective_fluxes']]
-            obj_maxs = [obj['maximum'] for obj in fvseof_results['objective_fluxes']]
-            
-            ax2.fill_between(target_fluxes, obj_mins, obj_maxs, alpha=0.3, color='green')
-            ax2.plot(target_fluxes, obj_mins, 'g-', marker='o', label='Min objective')
-            ax2.plot(target_fluxes, obj_maxs, 'g-', marker='s', label='Max objective')
-            ax2.set_xlabel(f'{target_reaction} Flux')
-            ax2.set_ylabel(f'{sim.objective} Flux')
-            ax2.set_title('FVSEOF: Growth vs Production Trade-off')
-            ax2.legend()
-            ax2.grid(True, alpha=0.3)
-            
-            # Plot 3: Metabolic flexibility
-            ax3 = axes[1, 0]
-            ax3.plot(target_fluxes, flexibility_scores, 'purple', marker='D', linewidth=2)
-            ax3.set_xlabel(f'{target_reaction} Flux')
-            ax3.set_ylabel('Average Flux Range')
-            ax3.set_title('FVSEOF: Metabolic Flexibility')
-            ax3.grid(True, alpha=0.3)
-            
-            # Plot 4: FVA results (bar plot)
-            ax4 = axes[1, 1]
-            rxn_names = list(fva_result['fva_data'].keys())[:10]
-            ranges = [fva_result['fva_data'][r]['range'] for r in rxn_names]
-            
-            colors = ['red' if r > 0.1 else 'blue' for r in ranges]
-            ax4.barh(range(len(rxn_names)), ranges, color=colors, alpha=0.6)
-            ax4.set_yticks(range(len(rxn_names)))
-            ax4.set_yticklabels(rxn_names, fontsize=8)
-            ax4.set_xlabel('Flux Range')
-            ax4.set_title('FVA: Flux Variability (90% optimum)')
-            ax4.grid(True, alpha=0.3, axis='x')
-            
-            plt.tight_layout()
-            plt.savefig('/mnt/user-data/outputs/fseof_fvseof_analysis.png', dpi=300, bbox_inches='tight')
-            print("✓ Visualization saved")
-            
-        except Exception as e:
-            print(f"✗ Visualization failed: {e}")
-    
-    else:
-        print(f"✗ FVSEOF failed with status: {fvseof_status}")
-    
-    # ===== Summary =====
-    print("\n" + "="*80)
-    print("SUMMARY")
-    print("="*80)
-    print(f"✓ FSEOF: Identified flux range at 100% growth: [{min_flux:.4f}, {max_flux:.4f}]")
-    print(f"✓ FVA: Analyzed {len(fva_result['fva_data'])} reactions")
-    print(f"✓ FVSEOF: Mapped production envelope with {len(fvseof_results['target_fluxes'])} points")
-    print("="*80)
-
 
 def test_simulator_comparison(model_name="iJO1366"):
     """
@@ -1312,13 +1039,7 @@ if __name__ == "__main__":
     else:
         test_type = "all"
         model = "textbook"
-    
-    if test_type in ["fseof", "all"]:
-        print("\n" + "="*80)
-        print("RUNNING FSEOF/FVSEOF TESTS")
-        print("="*80)
-        test_fseof_fvseof(model)
-    
+
     if test_type in ["comparison", "all"]:
         print("\n" + "="*80)
         print("RUNNING SIMULATOR COMPARISON TESTS")
